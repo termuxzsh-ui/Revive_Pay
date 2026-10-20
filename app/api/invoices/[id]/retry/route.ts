@@ -17,6 +17,23 @@ export async function POST(
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
+  const { data: profile, error: profileError } = await supabase
+    .from("users")
+    .select("stripe_subscription_status")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("Could not verify subscription before retrying email.", profileError);
+    return NextResponse.json({ error: "Could not verify your subscription." }, { status: 500 });
+  }
+  if (!profile || !["active", "trialing"].includes(profile.stripe_subscription_status)) {
+    return NextResponse.json(
+      { error: "An active RevivePay subscription is required." },
+      { status: 403 },
+    );
+  }
+
   const { data: invoice, error } = await supabase
     .from("failed_invoices")
     .select("id, customer_email, customer_name, amount_due, currency, hosted_invoice_url, status")

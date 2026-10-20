@@ -25,7 +25,7 @@ export async function signIn(
     return { error: error.message };
   }
 
-  redirect("/dashboard");
+  redirect("/setup");
 }
 
 export async function signUp(
@@ -46,7 +46,7 @@ export async function signUp(
   }
 
   if (data.session) {
-    redirect("/dashboard");
+    redirect("/setup");
   }
 
   return {

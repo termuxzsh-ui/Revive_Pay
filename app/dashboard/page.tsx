@@ -68,26 +68,33 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const [{ data: invoices, error: invoicesError }, { data: profile, error: profileError }] =
-    await Promise.all([
-      supabase
-        .from("failed_invoices")
-        .select(
-          "id, customer_email, customer_name, amount_due, currency, attempt_count, status, created_at",
-        )
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("users")
-        .select("email, notification_email, stripe_account_id")
-        .eq("id", user.id)
-        .maybeSingle(),
-    ]);
+  const { data: profile, error: profileError } = await supabase
+    .from("users")
+    .select(
+      "email, notification_email, stripe_account_id, stripe_subscription_status",
+    )
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(`Could not load your RevivePay profile: ${profileError.message}`);
+  }
+  if (!profile) {
+    throw new Error("Your RevivePay profile was not found. Contact support.");
+  }
+  if (!["active", "trialing"].includes(profile.stripe_subscription_status)) {
+    redirect("/setup");
+  }
+
+  const { data: invoices, error: invoicesError } = await supabase
+    .from("failed_invoices")
+    .select(
+      "id, customer_email, customer_name, amount_due, currency, attempt_count, status, created_at",
+    )
+    .order("created_at", { ascending: false });
 
   if (invoicesError) {
     throw new Error(`Could not load failed invoices: ${invoicesError.message}`);
-  }
-  if (profileError) {
-    throw new Error(`Could not load your RevivePay profile: ${profileError.message}`);
   }
 
   const rows = (invoices ?? []) as Invoice[];
@@ -194,12 +201,12 @@ export default async function DashboardPage() {
           </div>
           <div className="flex items-center gap-3">
             <span
-              className={`hidden items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium sm:flex ${profile?.stripe_account_id ? "border-[#174b64] bg-[#102431] text-[#8bdcff]" : "border-[#514327] bg-[#211e16] text-[#e8c576]"}`}
+              className={`hidden items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium sm:flex $              {profile.stripe_account_id ? "border-[#174b64] bg-[#102431] text-[#8bdcff]" : "border-[#514327] bg-[#211e16] text-[#e8c576]"}`}
             >
               <span
-                className={`size-1.5 rounded-full ${profile?.stripe_account_id ? "bg-[#13b9f3]" : "bg-[#e5b84f]"}`}
+                className={`size-1.5 rounded-full ${profile.stripe_account_id ? "bg-[#13b9f3]" : "bg-[#e5b84f]"}`}
               />
-              {profile?.stripe_account_id ? "Stripe connected" : "Stripe setup needed"}
+              {profile.stripe_account_id ? "Stripe connected" : "Stripe setup needed"}
             </span>
             <button
               aria-label="Notifications"
@@ -238,7 +245,7 @@ export default async function DashboardPage() {
             </a>
           </div>
 
-          {!profile?.stripe_account_id ? (
+          {!profile.stripe_account_id ? (
             <section className="mt-7 flex flex-col gap-4 rounded-xl border border-[#514327] bg-[#1a1914] p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
               <div className="flex gap-3">
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#292619] text-[#e8c576]">
@@ -249,17 +256,15 @@ export default async function DashboardPage() {
                     Connect your Stripe account to start recovering payments
                   </h2>
                   <p className="mt-1 text-xs leading-5 text-[#a49a7b]">
-                    Add your Stripe Connect account ID to your RevivePay profile and configure the Stripe webhook endpoint.
+                    Finish connecting the Stripe account where your customer invoices are managed.
                   </p>
                 </div>
               </div>
               <a
                 className="shrink-0 text-xs font-semibold text-[#d9b95f] underline decoration-[#6c5a30] underline-offset-4 hover:text-[#f4d782]"
-                href="https://dashboard.stripe.com/settings/connect"
-                rel="noreferrer"
-                target="_blank"
+                href="/setup"
               >
-                Open Stripe settings
+                Finish setup
               </a>
             </section>
           ) : null}

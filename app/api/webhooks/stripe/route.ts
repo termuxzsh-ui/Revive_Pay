@@ -5,6 +5,8 @@ import {
   sendRecoveryEmail,
 } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getStripeForConnectedAccount } from "@/lib/stripe-connect";
+import { expectsLiveStripeEvents } from "@/lib/stripe-mode";
 import { getStripe } from "@/lib/stripe";
 
 type Owner = {
@@ -43,10 +45,13 @@ async function getCustomerDetails(
   let name = invoice.customer_name ?? null;
 
   if ((!email || !name) && typeof invoice.customer === "string") {
-    const customer = await getStripe().customers.retrieve(
+    const connectedStripe = accountId
+      ? await getStripeForConnectedAccount(accountId)
+      : { stripe: getStripe(), options: undefined };
+    const customer = await connectedStripe.stripe.customers.retrieve(
       invoice.customer,
       {},
-      accountId ? { stripeAccount: accountId } : undefined,
+      connectedStripe.options,
     );
     if (!customer.deleted) {
       email ??= customer.email ?? null;
@@ -303,6 +308,38 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Stripe webhook signature verification failed.", error);
     return NextResponse.json({ error: "Invalid Stripe webhook signature." }, { status: 400 });
+  }
+
+  if (event.livemode !== expectsLiveStripeEvents()) {
+    console.warn("Ignoring connected-account Stripe event from the wrong mode.", {
+      eventId: event.id,
+      livemode: event.livemode,
+    });
+    return NextResponse.json({ received: true, ignored: "wrong_mode" });
+  }
+
+  if (event.type === "account.application.deauthorized" && event.account) {
+    const admin = createAdminClient();
+    const { error: profileError } = await admin
+      .from("users")
+      .update({ stripe_account_id: null })
+      .eq("stripe_account_id", event.account);
+
+    if (profileError) {
+      console.error("Could not unlink a revoked Stripe account.", profileError);
+      return NextResponse.json({ error: "Could not unlink Stripe account." }, { status: 500 });
+    }
+
+    const { error: connectionError } = await admin
+      .from("stripe_connections")
+      .delete()
+      .eq("stripe_account_id", event.account);
+
+    if (connectionError) {
+      console.error("Could not remove revoked Stripe authorization.", connectionError);
+      return NextResponse.json({ error: "Could not remove Stripe authorization." }, { status: 500 });
+    }
+    return NextResponse.json({ received: true });
   }
 
   const accountId = event.account ?? null;
